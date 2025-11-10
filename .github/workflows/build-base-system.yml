@@ -96,6 +96,11 @@ jobs:
       METIS_BUILD:   ${{ github.workspace }}/build/metis
       METIS_PREFIX:  ${{ github.workspace }}/install/metis
 
+      # hypre paths
+      HYPRE_SRC:    ${{ github.workspace }}/hypre
+      HYPRE_BUILD:  ${{ github.workspace }}/build/hypre
+      HYPRE_PREFIX: ${{ github.workspace }}/install/hypre
+
       # Feature toggles for this stack build
       USE_MPP: ${{ inputs.enable_mutationpp }}
       USE_PRECICE: ${{ inputs.enable_precice }}
@@ -688,6 +693,40 @@ jobs:
           echo "LD_LIBRARY_PATH=${METIS_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
           echo "CMAKE_PREFIX_PATH=${METIS_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
 
+      - name: Clone hypre
+        if: ${{ runner.os == 'Linux' && env.USE_MFEM == 'true' }}
+        run: |
+          set -eux
+          # You can pin whatever version you like here
+          HYPRE_REF="v2.32.0"
+          git clone https://github.com/hypre-space/hypre.git "${HYPRE_SRC}"
+          cd "${HYPRE_SRC}"
+          git checkout "${HYPRE_REF}"
+
+      - name: Build and install hypre (CMake, MPI)
+        if: ${{ runner.os == 'Linux' && env.USE_MFEM == 'true' }}
+        run: |
+          set -eux
+
+          mkdir -p "${HYPRE_BUILD}" "${HYPRE_PREFIX}"
+
+          cmake -S "${HYPRE_SRC}/src" -B "${HYPRE_BUILD}" \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
+            -DCMAKE_INSTALL_PREFIX="${HYPRE_PREFIX}" \
+            -DHYPRE_WITH_MPI=ON \
+            -DHYPRE_ENABLE_SHARED=ON \
+            -DHYPRE_WITH_OPENMP=OFF
+
+          cmake --build "${HYPRE_BUILD}" \
+            --config "${CMAKE_BUILD_TYPE}" \
+            --target install -- -j"$(nproc || echo 2)"
+
+          echo "HYPRE_DIR=${HYPRE_PREFIX}" >> "$GITHUB_ENV"
+          echo "CPATH=${HYPRE_PREFIX}/include:${CPATH:-}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${HYPRE_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=${HYPRE_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
+
       - name: Clone MFEM
         if: ${{ runner.os == 'Linux' && env.USE_MFEM == 'true' }}
         run: |
@@ -714,7 +753,7 @@ jobs:
             -DMFEM_USE_METIS_5=YES \
             -DMFEM_USE_ADIOS2=YES \
             -DADIOS2_DIR="${ADIOS2_PREFIX}" \
-            -DHYPRE_DIR=/usr \
+            -DHYPRE_DIR="${HYPRE_PREFIX}" \
             -DMETIS_DIR="${METIS_PREFIX}"
 
           cmake --build "${MFEM_BUILD}" \
