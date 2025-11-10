@@ -8,26 +8,39 @@ on:
 jobs:
   lint:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ---------- YAML linting (Python + yamllint) ----------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
-      - name: Install linting tools
+      - name: Install yamllint
         run: |
           python -m pip install --upgrade pip
-          pip install yamllint markdownlint-cli
+          pip install yamllint
 
       - name: Lint YAML files
         run: |
           echo "🔍 Running yamllint..."
+          # Lint all YAML files in the repo, including workflows
           yamllint -s .
+
+      # ---------- Markdown linting (Node + markdownlint-cli2) ----------
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Lint Markdown files
         run: |
-          echo "🧾 Running markdownlint..."
-          npx markdownlint-cli2 '**/*.md' '!node_modules'
+          echo "🧾 Running markdownlint-cli2..."
+          npx markdownlint-cli2 "**/*.md" "#node_modules"
+
+      # ---------- GitHub Actions workflow validation (optional but useful) ----------
+      - name: Validate GitHub Actions workflows with actionlint
+        uses: rhysd/actionlint@v1
