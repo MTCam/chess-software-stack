@@ -43,4 +43,4 @@ jobs:
 
       # ---------- GitHub Actions workflow validation (optional but useful) ----------
       - name: Validate GitHub Actions workflows with actionlint
-        uses: rhysd/actionlint@v1
+        uses: devops-actions/actionlint@v0.1.9
