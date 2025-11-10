@@ -455,7 +455,7 @@ jobs:
         id: cache-mpp
         uses: actions/cache@v4
         with:
-v          path: ${{ env.MPP_PREFIX }}
+          path: ${{ env.MPP_PREFIX }}
           key: ${{ runner.os }}-mpp-${{ steps.mppsha.outputs.mpp_sha }}-${{ env.CMAKE_BUILD_TYPE }}
 
       - name: Build & install Mutation++ (C++)
