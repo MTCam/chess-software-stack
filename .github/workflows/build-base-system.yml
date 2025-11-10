@@ -73,9 +73,9 @@ jobs:
       PRECICE_PREFIX: ${{ github.workspace }}/install/precice
 
       # SUNDIALS paths
-      SUNDIALS_SRC:   ${{ github.workspace }}/sundials
-      SUNDIALS_BUILD: ${{ github.workspace }}/build/sundials
-      SUNDIALS_PREFIX:${{ github.workspace }}/install/sundials
+      SUNDIALS_SRC:    ${{ github.workspace }}/sundials
+      SUNDIALS_BUILD:  ${{ github.workspace }}/build/sundials
+      SUNDIALS_PREFIX: ${{ github.workspace }}/install/sundials
 
       # MFEM paths 
       MFEM_SRC:      ${{ github.workspace }}/mfem
