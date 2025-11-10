@@ -1,0 +1,723 @@
+name: Base system install for CHESS software stack (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner label (e.g. ubuntu-latest, macos-latest)'
+        type: string
+        required: false
+        default: ubuntu-latest
+
+      enable_mutationpp:
+        description: 'Build and install Mutation++ (C++ + Python)'
+        required: false
+        type: boolean
+        default: true
+
+      enable_precice:
+        description: 'Build and install preCICE (with PETSc & Python)'
+        required: false
+        type: boolean
+        default: true
+
+      enable_sundials:
+        description: 'Build and install SUNDIALS'
+        required: false
+        type: boolean
+        default: true
+
+      enable_adios2:
+        description: 'Build and install ADIOS2'
+        required: false
+        type: boolean
+        default: true
+
+      enable_mfem:
+        description: 'Build and install MFEM'
+        required: false
+        type: boolean
+        default: true
+
+      build_label:
+        required: false
+        type: string
+        description: 'Human readable build name (shown in UI)'
+
+    outputs:
+      build_name:
+        description: 'BUILD_NAME used for artifacts'
+        value: ${{ jobs.build.outputs.build_name }}
+
+jobs:
+  build:
+    name: ${{ inputs.build_label || inputs.runner }}
+    runs-on: ${{ inputs.runner }}
+
+    outputs:
+      build_name: ${{ steps.build-name.outputs.build_name }}
+
+    env:
+      OMPI_MCA_rmaps_base_oversubscribe: "1"
+      CMAKE_BUILD_TYPE: Release
+
+      # Mutation++ paths
+      MPP_SRC: ${{ github.workspace }}/Mutationpp
+      MPP_BUILD: ${{ github.workspace }}/build/mpp
+      MPP_PREFIX: ${{ github.workspace }}/install/mpp
+      MPP_PY_PREFIX: ${{ github.workspace }}/install/mpp-py
+      PYTHON_ABI: py312   # Keep this in sync with the runner's Python major.minor
+
+      # preCICE paths
+      PRECICE_SRC: ${{ github.workspace }}/precice
+      PRECICE_PREFIX: ${{ github.workspace }}/install/precice
+
+      # SUNDIALS paths
+      SUNDIALS_SRC:   ${{ github.workspace }}/sundials
+      SUNDIALS_BUILD: ${{ github.workspace }}/build/sundials
+      SUNDIALS_PREFIX:${{ github.workspace }}/install/sundials
+
+      # MFEM paths 
+      MFEM_SRC:      ${{ github.workspace }}/mfem
+      MFEM_BUILD:    ${{ github.workspace }}/build/mfem
+      MFEM_PREFIX:   ${{ github.workspace }}/install/mfem
+
+      # ADIOS2 paths
+      ADIOS2_SRC:    ${{ github.workspace }}/adios2
+      ADIOS2_BUILD:  ${{ github.workspace }}/build/adios2
+      ADIOS2_PREFIX: ${{ github.workspace }}/install/adios2
+
+      # Feature toggles for this stack build
+      USE_MPP: ${{ inputs.enable_mutationpp }}
+      USE_PRECICE: ${{ inputs.enable_precice }}
+      USE_SUNDIALS: ${{ inputs.enable_sundials }}
+      USE_MFEM: ${{ inputs.enable_mfem }}
+      USE_ADIOS2:    ${{ inputs.enable_adios2 }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Process configuration / build name
+        id: build-name
+        run: |
+          if [ -n "${{ inputs.build_label }}" ]; then
+            echo "Using caller-specified build_label for BUILD_NAME"
+            name="${{ inputs.build_label }}"
+          else
+            echo "Conjuring BUILD_NAME from runner and enabled deps"
+            name="${{ inputs.runner }}"
+            if [ "${{ inputs.enable_mutationpp }}" = "true" ]; then
+              name="${name:+$name-}mpp"
+            fi
+            if [ "${{ inputs.enable_precice }}" = "true" ]; then
+              name="${name:+$name-}precice"
+            fi
+            [ -z "${name}" ] && name="base"
+          fi
+
+          BUILD_NAME=$name
+          echo "BUILD_NAME=$name" >> "$GITHUB_ENV"
+          echo "build_name=$name" >> "$GITHUB_OUTPUT"
+
+          echo "Runner:        ${{ inputs.runner }}"
+          echo "Build label:   ${{ inputs.build_label }}"
+          echo "Build name:    $BUILD_NAME"
+
+          printf "Mutation++: "
+          if [ "${{ inputs.enable_mutationpp }}" = "true" ]; then
+            printf "ON\n"
+          else
+            printf "OFF\n"
+          fi
+
+          printf "preCICE:    "
+          if [ "${{ inputs.enable_precice }}" = "true" ]; then
+            printf "ON\n"
+          else
+            printf "OFF\n"
+          fi
+
+      - name: Install Linux build-time system (${{ env.BUILD_NAME }})
+        if: ${{ runner.os == 'Linux' }}
+        # PETSc package drags in MPI, HDF5, BLAS/LAPACK, etc
+        run: |
+          set -eux
+
+          sudo apt-get update
+          sudo apt-get install -y \
+            gfortran gcc g++ libboost-all-dev \
+            make automake autoconf libtool pkg-config \
+            petsc-dev cmake ninja-build libeigen3-dev \
+            libblas-dev liblapack-dev \
+            libhdf5-openmpi-dev \
+            libhypre-dev libmetis-dev \
+            python3 python3-pip python3-dev python3-venv \
+            wget
+
+          python3 -m pip install --upgrade pip
+          python3 -m pip install numpy scipy matplotlib
+          python3 -m pip install -U setuptools wheel scikit-build ninja
+
+          mpif90 -show || true
+          mpicc  -show || true
+
+      - name: Install macOS build-time system (${{ env.BUILD_NAME }})
+        if: ${{ runner.os == 'macOS' }}
+        run: |
+          set -eux
+
+          brew update
+          brew install \
+            gcc boost \
+            automake autoconf libtool pkg-config \
+            cmake ninja eigen \
+            open-mpi hdf5 petsc wget
+
+          python3 -m pip install --upgrade pip
+          python3 -m pip install numpy scipy matplotlib
+          python3 -m pip install -U setuptools wheel scikit-build ninja
+
+          mpif90 -show || true
+          mpicc  -show || true
+
+      - name: Housekeeping for Linux PETSc install
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          set -eux
+
+          echo "=== Searching for PETSc petscvariables under /usr/lib ==="
+          find /usr/lib/petscdir -maxdepth 8 -type f \
+            \( -name 'petscvariables' -o -name 'variables' \) -print || true
+
+          PETSC_VAR_FILE=$(find /usr/lib/petscdir -maxdepth 8 -type f -path '*lib/petsc/conf/petscvariables' | head -n 1 || true)
+
+          if [ -z "${PETSC_VAR_FILE}" ]; then
+            echo "ERROR: Could not find petscvariables under /usr/lib/petscdir"
+            exit 1
+          fi
+
+          echo "Found PETSC_VAR_FILE=${PETSC_VAR_FILE}"
+
+          # Strip the known suffix to get PETSC_DIR:
+          #   PETSC_VAR_FILE = PETSC_DIR/lib/petsc/conf/petscvariables
+          PETSC_DIR="${PETSC_VAR_FILE%/lib/petsc/conf/petscvariables}"
+
+          echo "Derived PETSC_DIR=${PETSC_DIR}"
+
+          # Sanity check
+          if [ ! -f "${PETSC_DIR}/lib/petsc/conf/petscvariables" ]; then
+            echo "ERROR: Derived PETSC_DIR does not contain lib/petsc/conf/petscvariables"
+            ls -l "${PETSC_DIR}/lib/petsc/conf" || true
+            exit 1
+          fi
+
+          # Export for later steps
+          echo "PETSC_DIR=${PETSC_DIR}" >> "$GITHUB_ENV"
+
+          # PETSc was linked against system BLAS/LAPACK, but its variables
+          # still request -lflapack -lfblas.  Add symlinks so the names resolve.
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/liblapack.so /usr/lib/x86_64-linux-gnu/libflapack.so
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libblas.so   /usr/lib/x86_64-linux-gnu/libfblas.so
+
+      - name: Housekeeping for Linux HDF5 install
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          set -eux
+
+          if ! command -v h5pcc >/dev/null 2>&1; then
+            echo "ERROR: h5pcc not found; make sure libhdf5-openmpi-dev is installed."
+            exit 1
+          fi
+
+          echo "=== h5pcc -showconfig ==="
+          h5pcc -showconfig || true
+
+          # Crude but effective: extract first -I and -L from h5pcc -show
+          H5_SHOW="$(h5pcc -show)"
+          HDF5_INCDIR=$(echo "${H5_SHOW}" | tr ' ' '\n' | grep '^-I' | head -n1 | sed 's/^-I//')
+          HDF5_LIBDIR=$(echo "${H5_SHOW}" | tr ' ' '\n' | grep '^-L' | head -n1 | sed 's/^-L//')
+
+          if [ -z "${HDF5_INCDIR}" ] || [ -z "${HDF5_LIBDIR}" ]; then
+            echo "ERROR: Could not parse HDF5 include/lib dirs from h5pcc -show."
+            echo "${H5_SHOW}"
+            exit 1
+          fi
+
+          echo "Detected HDF5_INCDIR=${HDF5_INCDIR}"
+          echo "Detected HDF5_LIBDIR=${HDF5_LIBDIR}"
+
+          # Build a synthetic prefix that matches CGNS's expectation: prefix/include, prefix/lib
+          HDF5_DIR="$HOME/hdf5-prefix"
+          mkdir -p "${HDF5_DIR}/include" "${HDF5_DIR}/lib" "${HDF5_DIR}/bin"
+          ln -sf "${HDF5_INCDIR}"/* "${HDF5_DIR}/include/"
+          ln -sf "${HDF5_LIBDIR}"/* "${HDF5_DIR}/lib/"
+          ln -sf /usr/bin/h5* "${HDF5_DIR}/bin/"
+
+          echo "Using HDF5_DIR=${HDF5_DIR} as CGNS prefix"
+
+          {
+            echo "HDF5_DIR=${HDF5_DIR}"
+            echo "HDF5_INCDIR=${HDF5_DIR}/include"
+            echo "HDF5_LIBDIR=${HDF5_DIR}/lib"
+            echo "LD_LIBRARY_PATH=${HDF5_DIR}/lib:${LD_LIBRARY_PATH:-}"
+          } >> "$GITHUB_ENV"
+
+      - name: Build CGNS (parallel, with HDF5)
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          set -eux
+          : "${HDF5_DIR:?HDF5_DIR not set}"
+          : "${HDF5_INCDIR:?HDF5_INCDIR not set}"
+          : "${HDF5_LIBDIR:?HDF5_LIBDIR not set}"
+
+          CGNS_VERSION=4.5.0
+          CGNS_PREFIX="$HOME/cgns-${CGNS_VERSION}"
+
+          cd "$HOME"
+          if [ ! -f "v${CGNS_VERSION}.tar.gz" ]; then
+            wget -q "https://github.com/CGNS/CGNS/archive/refs/tags/v${CGNS_VERSION}.tar.gz"
+          fi
+          rm -rf "CGNS-${CGNS_VERSION}"
+          tar -xzf "v${CGNS_VERSION}.tar.gz"
+
+          cd "CGNS-${CGNS_VERSION}/src"
+
+          ./configure \
+            FC=mpif90 \
+            CC=mpicc \
+            CXX=mpicxx \
+            --enable-64bit \
+            --with-fortran \
+            --enable-parallel \
+            --with-hdf5="${HDF5_DIR}" \
+            --prefix="${CGNS_PREFIX}"
+
+          make
+          make install
+
+          echo "CGNS_DIR=${CGNS_PREFIX}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${CGNS_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      - name: Build SUNDIALS (Linux)
+        if: ${{ runner.os == 'Linux' && env.USE_SUNDIALS == 'true' }}
+        run: |
+          set -eux
+
+          SUNDIALS_VERSION=7.5.0
+          SUNDIALS_TAR="sundials-${SUNDIALS_VERSION}.tar.gz"
+          SUNDIALS_URL="https://github.com/LLNL/sundials/releases/download/v${SUNDIALS_VERSION}/${SUNDIALS_TAR}"
+
+          mkdir -p "${SUNDIALS_BUILD}" "${SUNDIALS_PREFIX}"
+          cd "${HOME}"
+
+          if [ ! -f "${SUNDIALS_TAR}" ]; then
+            wget -q "${SUNDIALS_URL}"
+          fi
+
+          rm -rf "sundials-${SUNDIALS_VERSION}"
+          tar -xzf "${SUNDIALS_TAR}"
+
+          cmake -S "sundials-${SUNDIALS_VERSION}" -B "${SUNDIALS_BUILD}" \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
+            -DCMAKE_INSTALL_PREFIX="${SUNDIALS_PREFIX}" \
+            -DBUILD_SHARED_LIBS=ON \
+            -DEXAMPLES_ENABLE_C=OFF \
+            -DEXAMPLES_ENABLE_CXX=OFF \
+            -DEXAMPLES_ENABLE_F77=OFF \
+            -DEXAMPLES_ENABLE_F90=OFF \
+            -DMPI_ENABLE=ON \
+            -DOPENMP_ENABLE=OFF \
+            -DKLU_ENABLE=OFF \
+            -DLAPACK_ENABLE=ON \
+            -DBLAS_ENABLE=ON
+
+          cmake --build "${SUNDIALS_BUILD}" \
+            --config "${CMAKE_BUILD_TYPE}" \
+            --target install -- -j"$(nproc || echo 2)"
+
+          echo "SUNDIALS_DIR=${SUNDIALS_PREFIX}" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=${SUNDIALS_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=${SUNDIALS_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${SUNDIALS_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      - name: Build ADIOS2
+        if: ${{ runner.os == 'Linux' && env.USE_ADIOS2 == 'true' }}
+        run: |
+          set -eux
+
+          ADIOS2_VERSION=2.10.1
+          ADIOS2_TAR="v${ADIOS2_VERSION}.tar.gz"
+          ADIOS2_URL="https://github.com/ornladios/ADIOS2/archive/refs/tags/${ADIOS2_TAR}"
+
+          mkdir -p "${ADIOS2_BUILD}" "${ADIOS2_PREFIX}"
+          cd "${HOME}"
+
+          if [ ! -f "${ADIOS2_TAR}" ]; then
+            wget -q "${ADIOS2_URL}"
+          fi
+
+          rm -rf "ADIOS2-${ADIOS2_VERSION}"
+          tar -xzf "${ADIOS2_TAR}"
+
+          cmake -S "ADIOS2-${ADIOS2_VERSION}" -B "${ADIOS2_BUILD}" \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
+            -DCMAKE_INSTALL_PREFIX="${ADIOS2_PREFIX}" \
+            -DADIOS2_USE_MPI=ON \
+            -DADIOS2_BUILD_EXAMPLES=OFF \
+            -DADIOS2_BUILD_TESTING=OFF \
+            -DADIOS2_BUILD_PYTHON=OFF
+
+          cmake --build "${ADIOS2_BUILD}" \
+            --config "${CMAKE_BUILD_TYPE}" \
+            --target install -- -j"$(nproc || echo 2)"
+
+          echo "ADIOS2_DIR=${ADIOS2_PREFIX}" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=${ADIOS2_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=${ADIOS2_PREFIX}/lib/cmake:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${ADIOS2_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+
+      # ---- Mutation++ (C++ library only) -----------------------------------
+      - name: Clone Mutation++
+        if: ${{ env.USE_MPP == 'true' }}
+        run: |
+          set -eux
+          git clone --depth 1 https://github.com/mutationpp/Mutationpp.git "${MPP_SRC}"
+
+      - name: Get Mutation++ commit hash
+        if: ${{ env.USE_MPP == 'true' }}
+        id: mppsha
+        run: |
+          set -eux
+          echo "mpp_sha=$(git -C "${MPP_SRC}" rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Mutation++ install
+        if: ${{ env.USE_MPP == 'true' }}
+        id: cache-mpp
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MPP_PREFIX }}
+          key: ${{ runner.os }}-mpp-${{ steps.mppsha.outputs.mpp_sha }}-${{ env.CMAKE_BUILD_TYPE }}
+
+      - name: Build & install Mutation++ (C++)
+        if: ${{ env.USE_MPP == 'true' && steps.cache-mpp.outputs.cache-hit != 'true' }}
+        run: |
+          set -eux
+          cmake -S "${MPP_SRC}" -B "${MPP_BUILD}" \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
+            -DCMAKE_INSTALL_PREFIX="${MPP_PREFIX}"
+          cmake --build "${MPP_BUILD}" --config "${CMAKE_BUILD_TYPE}" --target install -- -v
+
+      - name: Configure Mutation++ environment
+        if: ${{ env.USE_MPP == 'true' }}
+        run: |
+          set -eux
+          echo "MPP_DIRECTORY=${MPP_SRC}" >> "$GITHUB_ENV"
+          echo "MPP_DATA_DIRECTORY=${MPP_SRC}/data" >> "$GITHUB_ENV"
+          echo "PATH=${MPP_PREFIX}/bin:${PATH}" >> "$GITHUB_ENV"
+
+          if [[ -d "${MPP_PREFIX}/lib64" ]]; then LIBDIR=lib64; else LIBDIR=lib; fi
+          echo "MPP_LIBDIR=${LIBDIR}" >> "$GITHUB_ENV"
+
+          echo "LD_LIBRARY_PATH=${MPP_PREFIX}/${LIBDIR}:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=${MPP_PREFIX}/${LIBDIR}/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=${MPP_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
+
+      - name: Cache Mutation++ Python bindings
+        if: ${{ env.USE_MPP == 'true' }}
+        id: cache-mpp-py
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MPP_PY_PREFIX }}
+          key: ${{ runner.os }}-mpp-py-${{ steps.mppsha.outputs.mpp_sha }}-${{ env.PYTHON_ABI }}
+
+      - name: Install Mutation++ Python bindings
+        if: ${{ env.USE_MPP == 'true' && steps.cache-mpp-py.outputs.cache-hit != 'true' }}
+        env:
+          # Needed to work around project settings
+          CMAKE_ARGS: -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+        run: |
+          set -eux
+          cmake --version
+
+          # Make sure the target directory exists
+          mkdir -p "${MPP_PY_PREFIX}"
+
+          # First try with normal build isolation
+          set +e
+          python3 -m pip install "${MPP_SRC}" \
+            --target "${MPP_PY_PREFIX}" \
+            --verbose
+          status=$?
+          set -e
+
+          # If that fails, try no build isolation
+          if [ $status -ne 0 ]; then
+            echo "First pip install attempt failed with exit code $status. Retrying with --no-build-isolation..."
+            python3 -m pip install "${MPP_SRC}" \
+              --no-build-isolation \
+              --target "${MPP_PY_PREFIX}" \
+              --verbose
+          fi
+
+      - name: Configure Python path for Mutation++
+        if: ${{ env.USE_MPP == 'true' }}
+        run: |
+          set -eux
+          echo "PYTHONPATH=${MPP_PY_PREFIX}:${PYTHONPATH:-}" >> "$GITHUB_ENV"
+
+      - name: Verify Mutation++ Python import
+        if: ${{ env.USE_MPP == 'true' }}
+        run: |
+          set -eux
+          python3 - <<'EOF'
+          import os
+          print("MPP_DIRECTORY:", os.environ.get("MPP_DIRECTORY"))
+          print("MPP_DATA_DIRECTORY:", os.environ.get("MPP_DATA_DIRECTORY"))
+
+          import mutationpp as mpp
+          print("mutationpp imported OK from:", mpp.__file__)
+          EOF
+
+      - name: Print Mutation++ environment
+        if: ${{ env.USE_MPP == 'true' }}
+        run: |
+          echo "MPP_DIRECTORY=$MPP_DIRECTORY"
+          echo "MPP_DATA_DIRECTORY=$MPP_DATA_DIRECTORY"
+          echo "Using libdir: $MPP_LIBDIR"
+          echo "PATH=$PATH"
+          echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}"
+          echo "CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH:-}"
+          echo "PKG_CONFIG_PATH=${PKG_CONFIG_PATH:-}"
+          echo "Python executable: $(command -v python3)"
+          python3 -V || true
+          echo "Python sys.path:"
+          python3 - <<'EOF' || true
+          import sys
+          for p in sys.path:
+              print("  ", p)
+          EOF
+
+          echo "Installed mutationpp info (if available):"
+          python3 - <<'EOF' || true
+          try:
+              import mutationpp as mpp
+              print("  mutationpp imported OK from:", mpp.__file__)
+          except Exception as e:
+              print("  mutationpp import failed:", e)
+          EOF
+
+      # ---- preCICE ---------------------------------------------------------
+      - name: Clone preCICE
+        if: ${{ env.USE_PRECICE == 'true' }}
+        run: |
+          set -eux
+          git clone -b release-v2.5.0 https://github.com/precice/precice.git "${PRECICE_SRC}"
+          cd "${PRECICE_SRC}"
+
+      - name: Cache preCICE install
+        if: ${{ env.USE_PRECICE == 'true' }}
+        id: cache-precice
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PRECICE_PREFIX }}
+          key: ${{ runner.os }}-precice-v2_5_0-${{ env.CMAKE_BUILD_TYPE }}
+
+      - name: Build & install preCICE (with PETSc + Python)
+        if: ${{ env.USE_PRECICE == 'true' && steps.cache-precice.outputs.cache-hit != 'true' }}
+        run: |
+          set -eux
+
+          cmake -S "${PRECICE_SRC}" -B "${PRECICE_SRC}/build" \
+            -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
+            -DBUILD_SHARED_LIBS=ON \
+            -DPRECICE_PythonActions=ON \
+            -DPRECICE_PETScMapping=ON \
+            -DPETSC_DIR="${PETSC_DIR:-}" \
+            -DPYTHON_EXECUTABLE="$(command -v python3)" \
+            -DCMAKE_C_COMPILER=mpicc \
+            -DCMAKE_Fortran_COMPILER=mpif90 \
+            -DCMAKE_CXX_COMPILER=mpicxx \
+            -DCMAKE_INSTALL_PREFIX="${PRECICE_PREFIX}"
+
+          cmake --build "${PRECICE_SRC}/build" \
+            --config "${CMAKE_BUILD_TYPE}" \
+            --target install -- -j"$(nproc || echo 2)"
+
+      - name: Configure and inspect preCICE environment
+        if: ${{ env.USE_PRECICE == 'true' }}
+        run: |
+          set -eux
+          ls -latR ${PRECICE_PREFIX}
+          echo "PRECICE_PREFIX=${PRECICE_PREFIX}" >> "$GITHUB_ENV"
+          echo "PATH=${PRECICE_PREFIX}/bin:${PATH}" >> "$GITHUB_ENV"
+          echo "PRECICE_DIR=${PRECICE_PREFIX}" >> "$GITHUB_ENV"
+
+          if [[ -d "${PRECICE_PREFIX}/lib64" ]]; then LIBDIR=lib64; else LIBDIR=lib; fi
+          echo "LD_LIBRARY_PATH=${PRECICE_PREFIX}/${LIBDIR}:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=${PRECICE_PREFIX}/${LIBDIR}/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=${PRECICE_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
+          echo "CPATH=${PRECICE_PREFIX}/include" >> "$GITHUB_ENV"
+
+          echo "PRECICE_PREFIX=$PRECICE_PREFIX"
+          echo "PATH=$PATH"
+          echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}"
+          echo "PKG_CONFIG_PATH=${PKG_CONFIG_PATH:-}"
+          echo "CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH:-}"
+
+      - name: Check preCICE installation using Fortran
+        if: ${{ env.USE_PRECICE == 'true' }}
+        run: |
+          set -eux
+
+          cat > precice_test.F90 << 'EOF'
+            program precicetest
+              implicit none
+              integer, parameter   :: str_l = 50
+              integer              :: rank, commsize, dt, numberOfVertices
+              character(len=str_l) :: participantName, config
+              external             :: precicef_create, precicef_finalize
+              rank     = 0
+              commsize = 1
+              dt       = 1
+              numberOfVertices = 3
+              participantName  = 'SolverOne'
+              config           = 'precice-config.xml'
+              call precicef_create(participantName, config, rank, commsize)
+              call precicef_finalize()
+            end program precicetest
+          EOF
+
+          mpif90 -o precice_test precice_test.F90 \
+            -I"${PRECICE_PREFIX}/include" \
+            -L"${PRECICE_PREFIX}/lib" -lprecice
+
+          echo "Manual preCICE Fortran test linked successfully."
+
+      - name: Build METIS
+        if: ${{ runner.os == 'Linux' && env.USE_MFEM == 'true' }}
+        run: |
+          set -eux
+
+          METIS_VERSION=5.1.0
+          METIS_TAR="metis-${METIS_VERSION}.tar.gz"
+          METIS_URL="https://github.com/KarypisLab/METIS/archive/refs/tags/v${METIS_VERSION}.tar.gz"
+
+          mkdir -p "${METIS_BUILD}" "${METIS_PREFIX}"
+          cd "${HOME}"
+
+          if [ ! -f "${METIS_TAR}" ]; then
+            wget -q -O "${METIS_TAR}" "${METIS_URL}"
+          fi
+
+          rm -rf "metis-${METIS_VERSION}"
+          tar -xzf "${METIS_TAR}"
+
+          cd "METIS-${METIS_VERSION}"
+          make config \
+            prefix="${METIS_PREFIX}" \
+            cc=mpicc \
+            gklib_path=GKlib \
+            openmp=no
+
+          make -j"$(nproc || echo 2)"
+          make install
+
+          echo "METIS_DIR=${METIS_PREFIX}" >> "$GITHUB_ENV"
+          echo "CPATH=${METIS_PREFIX}/include:${CPATH:-}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${METIS_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=${METIS_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
+
+
+      - name: Clone MFEM
+        if: ${{ runner.os == 'Linux' && env.USE_MFEM == 'true' }}
+        run: |
+          set -eux
+          # You can pin whatever version you like here (v4.4 from the advice,
+          # or keep using v4.8 if that's what you prefer).
+          MFEM_VERSION=v4.8
+          git clone --depth 1 --branch "${MFEM_VERSION}" https://github.com/mfem/mfem.git "${MFEM_SRC}"
+
+      - name: Build & install MFEM (MPI + HYPRE + METIS + ADIOS2)
+        if: ${{ runner.os == 'Linux' && env.USE_MFEM == 'true' }}
+        run: |
+          set -eux
+
+          mkdir -p "${MFEM_BUILD}" "${MFEM_PREFIX}"
+
+          cmake -S "${MFEM_SRC}" -B "${MFEM_BUILD}" \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
+            -DCMAKE_INSTALL_PREFIX="${MFEM_PREFIX}" \
+            -DMFEM_USE_MPI=YES \
+            -DMFEM_USE_LAPACK=YES \
+            -DMFEM_DEBUG=NO \
+            -DMFEM_USE_METIS_5=YES \
+            -DMFEM_USE_ADIOS2=YES \
+            -DADIOS2_DIR="${ADIOS2_PREFIX}" \
+            -DHYPRE_DIR=/usr \
+            -DMETIS_DIR="${METIS_PREFIX}"
+
+          cmake --build "${MFEM_BUILD}" \
+            --config "${CMAKE_BUILD_TYPE}" \
+            --target install -- -j"$(nproc || echo 2)"
+
+          echo "MFEM_DIR=${MFEM_PREFIX}" >> "$GITHUB_ENV"
+          echo "CPATH=${MFEM_PREFIX}/include:${CPATH:-}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${MFEM_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=${MFEM_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
+
+
+      - name: Package dependency stack artifacts (${{ env.BUILD_NAME }})
+        run: |
+          set -eux
+
+          ROOT="${GITHUB_WORKSPACE}/deps-${BUILD_NAME}"
+          rm -rf "${ROOT}"
+          mkdir -p "${ROOT}"
+
+          if [ -n "${CGNS_DIR:-}" ] && [ -d "${CGNS_DIR}" ]; then
+            cp -a "${CGNS_DIR}" "${ROOT}/cgns"
+          fi
+
+          if [ -n "${HDF5_DIR:-}" ] && [ -d "${HDF5_DIR}" ]; then
+            cp -a "${HDF5_DIR}" "${ROOT}/hdf5"
+          fi
+
+          if [ -d "${MPP_PREFIX}" ]; then
+            cp -a "${MPP_PREFIX}" "${ROOT}/mpp"
+          fi
+
+          if [ -d "${MPP_PY_PREFIX}" ]; then
+            cp -a "${MPP_PY_PREFIX}" "${ROOT}/mpp-py"
+          fi
+
+          if [ -d "${PRECICE_PREFIX}" ]; then
+            cp -a "${PRECICE_PREFIX}" "${ROOT}/precice"
+          fi
+
+          if [ -d "${SUNDIALS_PREFIX}" ]; then
+            cp -a "${SUNDIALS_PREFIX}" "${ROOT}/sundials"
+          fi
+
+          if [ -d "${METIS_PREFIX}" ]; then
+            cp -a "${METIS_PREFIX}" "${ROOT}/metis"
+          fi
+
+          if [ -d "${MFEM_SRC}" ]; then
+            cp -a "${MFEM_SRC}" "${ROOT}/mfem"
+          fi
+
+          tar -C "$(dirname "${ROOT}")" \
+            -czf "deps-${BUILD_NAME}.tar.gz" \
+            "$(basename "${ROOT}")"
+
+      - name: Upload dependency stack artifact (${{ env.BUILD_NAME }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: deps-${{ env.BUILD_NAME }}
+          path: deps-${{ env.BUILD_NAME }}.tar.gz

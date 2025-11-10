@@ -1,0 +1,29 @@
+name: Build base system stack
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build-stack:
+    strategy:
+      fail-fast: false
+      matrix:
+        # You can add more configs later; right now this is one Linux stack
+        config: [ ubuntu-mpp-mfem-coupling ]
+
+    uses: ./.github/workflows/build-base-system.yml
+    with:
+      runner: >-
+        ${{ startsWith(matrix.config, 'ubuntu-') && 'ubuntu-latest' ||
+            startsWith(matrix.config, 'macos-')  && 'macos-latest' }}
+
+      build_label: ${{ matrix.config }}
+
+      # Feature flags
+      enable_adios2:      true
+      enable_sundials:    true
+      enable_mutationpp:  ${{ contains(matrix.config, 'mpp') }}
+      enable_precice:     ${{ contains(matrix.config, 'coupling') }}
+      enable_mfem:        ${{ contains(matrix.config, 'mfem') }}
