@@ -633,21 +633,23 @@ jobs:
         run: |
           set -eux
 
-          METIS_VERSION=5.1.0
-          METIS_TAR="metis-${METIS_VERSION}.tar.gz"
-          METIS_URL="https://github.com/KarypisLab/METIS/archive/refs/tags/v${METIS_VERSION}.tar.gz"
+          # METIS_VERSION=5.1.0
+          # METIS_TAR="metis-${METIS_VERSION}.tar.gz"
+          # METIS_URL="https://github.com/KarypisLab/METIS/archive/refs/tags/v${METIS_VERSION}.tar.gz"
 
           mkdir -p "${METIS_BUILD}" "${METIS_PREFIX}"
           cd "${HOME}"
 
-          if [ ! -f "${METIS_TAR}" ]; then
-            wget -q -O "${METIS_TAR}" "${METIS_URL}"
-          fi
+          # if [ ! -f "${METIS_TAR}" ]; then
+          #  wget -q -O "${METIS_TAR}" "${METIS_URL}"
+          #fi
 
-          rm -rf "metis-${METIS_VERSION}"
-          tar -xzf "${METIS_TAR}"
+          # rm -rf "metis-${METIS_VERSION}"
+          # tar -xzf "${METIS_TAR}"
 
-          cd "METIS-${METIS_VERSION}"
+          # cd "METIS-${METIS_VERSION}"
+          git clone https://github.com/KarypisLab/METIS.git "${METIS_SRC}"
+          cd "${METIS_SRC}"
           make config \
             prefix="${METIS_PREFIX}" \
             cc=mpicc \
