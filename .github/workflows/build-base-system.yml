@@ -355,6 +355,7 @@ jobs:
           echo "CMAKE_PREFIX_PATH=${SUNDIALS_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
           echo "PKG_CONFIG_PATH=${SUNDIALS_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=${SUNDIALS_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=${SUNDIALS_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
 
       # - name: Cache ADIOS2 install
       #  id: cache-adios2
@@ -752,8 +753,10 @@ jobs:
             -DMFEM_DEBUG=NO \
             -DMFEM_USE_METIS_5=YES \
             -DMFEM_USE_ADIOS2=YES \
+            -DMFEM_USE_SUNDIALS=YES \
             -DADIOS2_DIR="${ADIOS2_PREFIX}" \
             -DHYPRE_DIR="${HYPRE_PREFIX}" \
+            -DSUNDIALS_DIR="${SUNDIALS_PREFIX}" \
             -DMETIS_DIR="${METIS_PREFIX}"
 
           cmake --build "${MFEM_BUILD}" \
@@ -800,6 +803,10 @@ jobs:
 
           if [ -d "${METIS_PREFIX}" ]; then
             cp -a "${METIS_PREFIX}" "${ROOT}/metis"
+          fi
+
+          if [ -d "${GKLIB_PREFIX}" ]; then
+            cp -a "${GKLIB_PREFIX}" "${ROOT}/gklib"
           fi
 
           if [ -d "${MFEM_SRC}" ]; then
