@@ -36,13 +36,14 @@ Each library is toggleable through feature flags within the reusable workflow, a
 
 ## Repository Layout
 
+```text
 .github/
 ├── workflows/
 │ ├── ci-build-base-system.yml ← Entry workflow: defines build matrix
 │ └── build-base-system.yml ← Reusable workflow: performs actual builds
 install/ ← Installation prefixes (per job)
 build/ ← Intermediate build directories
-
+```
 
 
 - **`ci-build-base-system.yml`** — runs matrix builds for Linux/macOS configurations.  
@@ -111,7 +112,7 @@ Downstream build systems (for example, CMake) can locate libraries by setting en
 
 Artifacts serve as portable, version-controlled dependency bundles that unify the software environment across CHESS projects.
 
-### 🧰 Example Local Reproduction
+### Example Local Reproduction
 
 To replicate a workflow build locally for testing or development:
 
@@ -140,6 +141,7 @@ To replicate a workflow build locally for testing or development:
    `-D<component>_DIR=<path-to-component>`.
 
 This process mirrors the automated CI build and allows local verification or customization before integrating changes upstream.
+
 ### Related CHESS Software
 
 The following software projects rely on, or are intended to integrate with, the CHESS build stacks:
