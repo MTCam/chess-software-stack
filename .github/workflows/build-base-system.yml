@@ -382,26 +382,39 @@ jobs:
       #    cd "${ADIOS2_SRC}"
       #    echo "adios2_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Build ADIOS2
+      - name: Clone ADIOS2
         if: ${{ runner.os == 'Linux' && env.USE_ADIOS2 == 'true' }}
         run: |
           set -eux
+          : "${ADIOS2_REF:=v2.10.1}"   # or main, or whatever you pin to
+          git clone https://github.com/ornladios/ADIOS2.git "${ADIOS2_SRC}"
+          cd "${ADIOS2_SRC}"
+          git checkout "${ADIOS2_REF}"
 
-          ADIOS2_VERSION=2.10.1
-          ADIOS2_TAR="v${ADIOS2_VERSION}.tar.gz"
-          ADIOS2_URL="https://github.com/ornladios/ADIOS2/archive/refs/tags/${ADIOS2_TAR}"
+      - name: Get ADIOS2 commit hash
+        if: ${{ runner.os == 'Linux' && env.USE_ADIOS2 == 'true' }}
+        id: adios2sha
+        run: |
+          set -eux
+          cd "${ADIOS2_SRC}"
+          echo "adios2_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache ADIOS2 install
+        if: ${{ runner.os == 'Linux' && env.USE_ADIOS2 == 'true' }}
+        id: cache-adios2
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ADIOS2_PREFIX }}
+          key: ${{ runner.os }}-adios2-${{ steps.adios2sha.outputs.adios2_sha }}-${{ env.BUILD_NAME }}-${{ env.CMAKE_BUILD_TYPE }}
+
+      - name: Build ADIOS2 (MPI-enabled)
+        if: ${{ runner.os == 'Linux' && env.USE_ADIOS2 == 'true' && steps.cache-adios2.outputs.cache-hit != 'true' }}
+        run: |
+          set -eux
 
           mkdir -p "${ADIOS2_BUILD}" "${ADIOS2_PREFIX}"
-          cd "${HOME}"
 
-          if [ ! -f "${ADIOS2_TAR}" ]; then
-            wget -q "${ADIOS2_URL}"
-          fi
-
-          rm -rf "ADIOS2-${ADIOS2_VERSION}"
-          tar -xzf "${ADIOS2_TAR}"
-
-          cmake -S "ADIOS2-${ADIOS2_VERSION}" -B "${ADIOS2_BUILD}" \
+          cmake -S "${ADIOS2_SRC}" -B "${ADIOS2_BUILD}" \
             -G Ninja \
             -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
             -DCMAKE_INSTALL_PREFIX="${ADIOS2_PREFIX}" \
@@ -414,11 +427,14 @@ jobs:
             --config "${CMAKE_BUILD_TYPE}" \
             --target install -- -j"$(nproc || echo 2)"
 
+      - name: Configure ADIOS2 environment
+        if: ${{ runner.os == 'Linux' && env.USE_ADIOS2 == 'true' }}
+        run: |
+          set -eux
           echo "ADIOS2_DIR=${ADIOS2_PREFIX}" >> "$GITHUB_ENV"
           echo "CMAKE_PREFIX_PATH=${ADIOS2_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
           echo "PKG_CONFIG_PATH=${ADIOS2_PREFIX}/lib/cmake:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=${ADIOS2_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
-
 
       # ---- Mutation++ (C++ library only) -----------------------------------
       - name: Clone Mutation++
@@ -439,7 +455,7 @@ jobs:
         id: cache-mpp
         uses: actions/cache@v4
         with:
-          path: ${{ env.MPP_PREFIX }}
+v          path: ${{ env.MPP_PREFIX }}
           key: ${{ runner.os }}-mpp-${{ steps.mppsha.outputs.mpp_sha }}-${{ env.CMAKE_BUILD_TYPE }}
 
       - name: Build & install Mutation++ (C++)
@@ -664,7 +680,6 @@ jobs:
           echo "LD_LIBRARY_PATH=${GKLIB_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
           echo "CMAKE_PREFIX_PATH=${GKLIB_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
 
-
       - name: Clone METIS
         if: ${{ runner.os == 'Linux' && env.USE_MFEM == 'true' }}
         run: |
@@ -737,8 +752,24 @@ jobs:
           MFEM_VERSION=v4.8
           git clone --depth 1 --branch "${MFEM_VERSION}" https://github.com/mfem/mfem.git "${MFEM_SRC}"
 
-      - name: Build & install MFEM (MPI + HYPRE + METIS + ADIOS2)
+      - name: Get MFEM commit hash
         if: ${{ runner.os == 'Linux' && env.USE_MFEM == 'true' }}
+        id: mfemsha
+        run: |
+          set -eux
+          cd "${MFEM_SRC}"
+          echo "mfem_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache MFEM install
+        if: ${{ runner.os == 'Linux' && env.USE_MFEM == 'true' }}
+        id: cache-mfem
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MFEM_PREFIX }}
+          key: ${{ runner.os }}-mfem-${{ steps.mfemsha.outputs.mfem_sha }}-${{ env.BUILD_NAME }}-${{ env.CMAKE_BUILD_TYPE }}
+
+      - name: Build & install MFEM (MPI + HYPRE + METIS + ADIOS2 + SUNDIALS)
+        if: ${{ runner.os == 'Linux' && env.USE_MFEM == 'true' && steps.cache-mfem.outputs.cache-hit != 'true' }}
         run: |
           set -eux
 
@@ -756,13 +787,17 @@ jobs:
             -DMFEM_USE_SUNDIALS=YES \
             -DADIOS2_DIR="${ADIOS2_PREFIX}" \
             -DHYPRE_DIR="${HYPRE_PREFIX}" \
-            -DSUNDIALS_DIR="${SUNDIALS_PREFIX}" \
-            -DMETIS_DIR="${METIS_PREFIX}"
+            -DMETIS_DIR="${METIS_PREFIX}" \
+            -DSUNDIALS_DIR="${SUNDIALS_PREFIX}"
 
           cmake --build "${MFEM_BUILD}" \
             --config "${CMAKE_BUILD_TYPE}" \
             --target install -- -j"$(nproc || echo 2)"
 
+      - name: Configure MFEM environment
+        if: ${{ runner.os == 'Linux' && env.USE_MFEM == 'true' }}
+        run: |
+          set -eux
           echo "MFEM_DIR=${MFEM_PREFIX}" >> "$GITHUB_ENV"
           echo "CPATH=${MFEM_PREFIX}/include:${CPATH:-}" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=${MFEM_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
