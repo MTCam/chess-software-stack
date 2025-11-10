@@ -87,6 +87,11 @@ jobs:
       ADIOS2_BUILD:  ${{ github.workspace }}/build/adios2
       ADIOS2_PREFIX: ${{ github.workspace }}/install/adios2
 
+      # METIS paths (we will build METIS 5 from source)
+      METIS_SRC:     ${{ github.workspace }}/metis
+      METIS_BUILD:   ${{ github.workspace }}/build/metis
+      METIS_PREFIX:  ${{ github.workspace }}/install/metis
+
       # Feature toggles for this stack build
       USE_MPP: ${{ inputs.enable_mutationpp }}
       USE_PRECICE: ${{ inputs.enable_precice }}
@@ -341,6 +346,31 @@ jobs:
           echo "CMAKE_PREFIX_PATH=${SUNDIALS_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
           echo "PKG_CONFIG_PATH=${SUNDIALS_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=${SUNDIALS_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      # - name: Cache ADIOS2 install
+      #  id: cache-adios2
+      #  uses: actions/cache@v4
+      #  with:
+      #    path: ${{ env.ADIOS2_PREFIX }}
+      #    key: ${{ runner.os }}-adios2-${{ env.CMAKE_BUILD_TYPE }}
+
+      # - name: Clone ADIOS2
+      #  if: ${{ runner.os == 'Linux' && env.USE_ADIOS2 == 'true' }}
+      #  run: |
+      #    set -eux
+      #    # You can switch ADIOS2_REF between a tag, branch, or commit
+      #    : "${ADIOS2_REF:=v2.10.1}"
+      #    git clone https://github.com/ornladios/ADIOS2.git "${ADIOS2_SRC}"
+      #    cd "${ADIOS2_SRC}"
+      #    git checkout "${ADIOS2_REF}"
+
+      #- name: Get ADIOS2 commit hash
+      #  if: ${{ runner.os == 'Linux' && env.USE_ADIOS2 == 'true' }}
+      #  id: adios2sha
+      #  run: |
+      #    set -eux
+      #    cd "${ADIOS2_SRC}"
+      #    echo "adios2_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Build ADIOS2
         if: ${{ runner.os == 'Linux' && env.USE_ADIOS2 == 'true' }}
