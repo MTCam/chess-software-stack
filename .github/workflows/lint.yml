@@ -1,9 +1,10 @@
 name: Lint and Validate Workflows
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
+  workflow_call:
+  # push:
+  #   branches: [ main ]
+  # pull_request:
 
 jobs:
   lint:
