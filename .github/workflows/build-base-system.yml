@@ -176,6 +176,10 @@ jobs:
           mpif90 -show || true
           mpicc  -show || true
 
+          # Expose Eigen to downstream CMake builds
+          echo "EIGEN3_INCLUDE_DIR=/usr/include/eigen3" >> "$GITHUB_ENV"
+          echo "CPATH=/usr/include/eigen3:${CPATH:-}" >> "$GITHUB_ENV"
+
       - name: Install macOS build-time system (${{ env.BUILD_NAME }})
         if: ${{ runner.os == 'macOS' }}
         run: |
@@ -194,6 +198,12 @@ jobs:
 
           mpif90 -show || true
           mpicc  -show || true
+
+          # Expose Eigen to downstream CMake builds on macOS
+          EIGEN_PREFIX="$(brew --prefix eigen)"
+          echo "EIGEN3_INCLUDE_DIR=${EIGEN_PREFIX}/include/eigen3" >> "$GITHUB_ENV"
+          echo "CPATH=${EIGEN_PREFIX}/include/eigen3:${CPATH:-}" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=${EIGEN_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
 
       - name: Housekeeping for Linux PETSc install
         if: ${{ runner.os == 'Linux' }}
