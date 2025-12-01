@@ -854,6 +854,10 @@ jobs:
             cp -a "${GKLIB_PREFIX}" "${ROOT}/gklib"
           fi
 
+          if [ -d "${MFEM_PREFIX}" ]; then
+            cp -a "${MFEM_PREFIX}" "${ROOT}/mfem-install"
+          fi
+
           if [ -d "${MFEM_SRC}" ]; then
             cp -a "${MFEM_SRC}" "${ROOT}/mfem"
           fi
