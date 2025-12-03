@@ -3,6 +3,12 @@ name: Base system install for CHESS software stack (reusable)
 on:
   workflow_call:
     inputs:
+      install-prefix:
+        description: 'Install prefix for CHESS software stack.'
+        required: false
+        type: string
+        default: ''
+
       runner:
         description: 'Runner label (e.g. ubuntu-latest, macos-latest)'
         type: string
@@ -61,45 +67,41 @@ jobs:
       OMPI_MCA_rmaps_base_oversubscribe: "1"
       CMAKE_BUILD_TYPE: Release
 
+      # Global CHESS software install path
+      CHESS_STACK_PREFIX: ${{ inputs.install-prefix != '' && inputs.install-prefix || format('{0}/chess-software', github.workspace) }}
+
       # Mutation++ paths
       MPP_SRC: ${{ github.workspace }}/Mutationpp
       MPP_BUILD: ${{ github.workspace }}/build/mpp
-      MPP_PREFIX: ${{ github.workspace }}/install/mpp
-      MPP_PY_PREFIX: ${{ github.workspace }}/install/mpp-py
+      MPP_PY_BUILD: ${{ github.workspace }}/build/mpp-py
       PYTHON_ABI: py312   # Keep this in sync with the runner's Python major.minor
 
       # preCICE paths
       PRECICE_SRC: ${{ github.workspace }}/precice
-      PRECICE_PREFIX: ${{ github.workspace }}/install/precice
+      PRECICE_BUILD: ${{ github.workspace }}/build/precice
 
       # SUNDIALS paths
       SUNDIALS_SRC:    ${{ github.workspace }}/sundials
       SUNDIALS_BUILD:  ${{ github.workspace }}/build/sundials
-      SUNDIALS_PREFIX: ${{ github.workspace }}/install/sundials
 
       # MFEM paths 
       MFEM_SRC:      ${{ github.workspace }}/mfem
       MFEM_BUILD:    ${{ github.workspace }}/build/mfem
-      MFEM_PREFIX:   ${{ github.workspace }}/install/mfem
 
       # ADIOS2 paths
       ADIOS2_SRC:    ${{ github.workspace }}/adios2
       ADIOS2_BUILD:  ${{ github.workspace }}/build/adios2
-      ADIOS2_PREFIX: ${{ github.workspace }}/install/adios2
 
       # GKlib paths (dependency of METIS)
       GKLIB_SRC:    ${{ github.workspace }}/GKlib
-      GKLIB_PREFIX: ${{ github.workspace }}/install/gklib
 
       # METIS paths (we will build METIS 5 from source)
       METIS_SRC:     ${{ github.workspace }}/metis
       METIS_BUILD:   ${{ github.workspace }}/build/metis
-      METIS_PREFIX:  ${{ github.workspace }}/install/metis
 
       # hypre paths
       HYPRE_SRC:    ${{ github.workspace }}/hypre
       HYPRE_BUILD:  ${{ github.workspace }}/build/hypre
-      HYPRE_PREFIX: ${{ github.workspace }}/install/hypre
 
       # Feature toggles for this stack build
       USE_MPP: ${{ inputs.enable_mutationpp }}
@@ -152,9 +154,21 @@ jobs:
             printf "OFF\n"
           fi
 
+      - name: Initial CHESS stack prefix setup
+        run: |
+          set -eux
+          mkdir -p "${CHESS_STACK_PREFIX}"
+          echo "CHESS_STACK_PREFIX=${CHESS_STACK_PREFIX}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${CHESS_STACK_PREFIX}/lib:${CHESS_STACK_PREFIX}/lib64:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV" 
+          echo "PATH=${CHESS_STACK_PREFIX}/bin:${PATH}" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=${CHESS_STACK_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=${CHESS_STACK_PREFIX}/lib/pkgconfig:${CHESS_STACK_PREFIX}/lib64/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+          echo "CPATH=${CHESS_STACK_PREFIX}/include:${CPATH:-}" >> "$GITHUB_ENV"
+          echo "PYTHONPATH=${CHESS_STACK_PREFIX}:${PYTHONPATH:-}" >> "$GITHUB_ENV"
+
       - name: Install Linux build-time system (${{ env.BUILD_NAME }})
         if: ${{ runner.os == 'Linux' }}
-        # PETSc package drags in MPI, HDF5, BLAS/LAPACK, etc
+        # PETSc package atuomatically drags in MPI, HDF5, BLAS/LAPACK, etc
         run: |
           set -eux
 
@@ -272,7 +286,8 @@ jobs:
           echo "Detected HDF5_LIBDIR=${HDF5_LIBDIR}"
 
           # Build a synthetic prefix that matches CGNS's expectation: prefix/include, prefix/lib
-          HDF5_DIR="$HOME/hdf5-prefix"
+          # HDF5_DIR="$HOME/hdf5-prefix"
+          HDF5_DIR="${CHESS_STACK_PREFIX}"
           mkdir -p "${HDF5_DIR}/include" "${HDF5_DIR}/lib" "${HDF5_DIR}/bin"
           ln -sf "${HDF5_INCDIR}"/* "${HDF5_DIR}/include/"
           ln -sf "${HDF5_LIBDIR}"/* "${HDF5_DIR}/lib/"
@@ -284,7 +299,6 @@ jobs:
             echo "HDF5_DIR=${HDF5_DIR}"
             echo "HDF5_INCDIR=${HDF5_DIR}/include"
             echo "HDF5_LIBDIR=${HDF5_DIR}/lib"
-            echo "LD_LIBRARY_PATH=${HDF5_DIR}/lib:${LD_LIBRARY_PATH:-}"
           } >> "$GITHUB_ENV"
 
       - name: Build CGNS (parallel, with HDF5)
@@ -296,8 +310,6 @@ jobs:
           : "${HDF5_LIBDIR:?HDF5_LIBDIR not set}"
 
           CGNS_VERSION=4.5.0
-          CGNS_PREFIX="$HOME/cgns-${CGNS_VERSION}"
-
           cd "$HOME"
           if [ ! -f "v${CGNS_VERSION}.tar.gz" ]; then
             wget -q "https://github.com/CGNS/CGNS/archive/refs/tags/v${CGNS_VERSION}.tar.gz"
@@ -315,13 +327,13 @@ jobs:
             --with-fortran \
             --enable-parallel \
             --with-hdf5="${HDF5_DIR}" \
-            --prefix="${CGNS_PREFIX}"
+            --prefix="${CHESS_STACK_PREFIX}"
 
           make
           make install
 
-          echo "CGNS_DIR=${CGNS_PREFIX}" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=${CGNS_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          echo "CGNS_DIR=${CHESS_STACK_PREFIX}" >> "$GITHUB_ENV"
+          # echo "LD_LIBRARY_PATH=${CHESS_STACK_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
 
       - name: Build SUNDIALS (Linux)
         if: ${{ runner.os == 'Linux' && env.USE_SUNDIALS == 'true' }}
@@ -332,7 +344,7 @@ jobs:
           SUNDIALS_TAR="sundials-${SUNDIALS_VERSION}.tar.gz"
           SUNDIALS_URL="https://github.com/LLNL/sundials/releases/download/v${SUNDIALS_VERSION}/${SUNDIALS_TAR}"
 
-          mkdir -p "${SUNDIALS_BUILD}" "${SUNDIALS_PREFIX}"
+          mkdir -p "${SUNDIALS_BUILD}" "${CHESS_STACK_PREFIX}"
           cd "${HOME}"
 
           if [ ! -f "${SUNDIALS_TAR}" ]; then
@@ -345,7 +357,7 @@ jobs:
           cmake -S "sundials-${SUNDIALS_VERSION}" -B "${SUNDIALS_BUILD}" \
             -G Ninja \
             -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
-            -DCMAKE_INSTALL_PREFIX="${SUNDIALS_PREFIX}" \
+            -DCMAKE_INSTALL_PREFIX="${CHESS_STACK_PREFIX}" \
             -DBUILD_SHARED_LIBS=ON \
             -DEXAMPLES_ENABLE_C=OFF \
             -DEXAMPLES_ENABLE_CXX=OFF \
@@ -361,42 +373,13 @@ jobs:
             --config "${CMAKE_BUILD_TYPE}" \
             --target install -- -j"$(nproc || echo 2)"
 
-          echo "SUNDIALS_DIR=${SUNDIALS_PREFIX}" >> "$GITHUB_ENV"
-          echo "CMAKE_PREFIX_PATH=${SUNDIALS_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=${SUNDIALS_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=${SUNDIALS_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
-          echo "CMAKE_PREFIX_PATH=${SUNDIALS_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
-
-      # - name: Cache ADIOS2 install
-      #  id: cache-adios2
-      #  uses: actions/cache@v4
-      #  with:
-      #    path: ${{ env.ADIOS2_PREFIX }}
-      #    key: ${{ runner.os }}-adios2-${{ env.CMAKE_BUILD_TYPE }}
-
-      # - name: Clone ADIOS2
-      #  if: ${{ runner.os == 'Linux' && env.USE_ADIOS2 == 'true' }}
-      #  run: |
-      #    set -eux
-      #    # You can switch ADIOS2_REF between a tag, branch, or commit
-      #    : "${ADIOS2_REF:=v2.10.1}"
-      #    git clone https://github.com/ornladios/ADIOS2.git "${ADIOS2_SRC}"
-      #    cd "${ADIOS2_SRC}"
-      #    git checkout "${ADIOS2_REF}"
-
-      #- name: Get ADIOS2 commit hash
-      #  if: ${{ runner.os == 'Linux' && env.USE_ADIOS2 == 'true' }}
-      #  id: adios2sha
-      #  run: |
-      #    set -eux
-      #    cd "${ADIOS2_SRC}"
-      #    echo "adios2_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "SUNDIALS_DIR=${CHESS_STACK_PREFIX}" >> "$GITHUB_ENV"
 
       - name: Clone ADIOS2
         if: ${{ runner.os == 'Linux' && env.USE_ADIOS2 == 'true' }}
         run: |
           set -eux
-          : "${ADIOS2_REF:=v2.10.1}"   # or main, or whatever you pin to
+          : "${ADIOS2_REF:=v2.10.1}"   # pin to this version
           git clone https://github.com/ornladios/ADIOS2.git "${ADIOS2_SRC}"
           cd "${ADIOS2_SRC}"
           git checkout "${ADIOS2_REF}"
@@ -409,29 +392,31 @@ jobs:
           cd "${ADIOS2_SRC}"
           echo "adios2_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Cache ADIOS2 install
+      - name: Cache ADIOS2 build
         if: ${{ runner.os == 'Linux' && env.USE_ADIOS2 == 'true' }}
         id: cache-adios2
         uses: actions/cache@v4
         with:
-          path: ${{ env.ADIOS2_PREFIX }}
+          path: ${{ env.ADIOS2_BUILD }}
           key: ${{ runner.os }}-adios2-${{ steps.adios2sha.outputs.adios2_sha }}-${{ env.BUILD_NAME }}-${{ env.CMAKE_BUILD_TYPE }}
 
       - name: Build ADIOS2 (MPI-enabled)
-        if: ${{ runner.os == 'Linux' && env.USE_ADIOS2 == 'true' && steps.cache-adios2.outputs.cache-hit != 'true' }}
+        if: ${{ runner.os == 'Linux' && env.USE_ADIOS2 == 'true' }}
         run: |
           set -eux
 
-          mkdir -p "${ADIOS2_BUILD}" "${ADIOS2_PREFIX}"
+          mkdir -p "${ADIOS2_BUILD}" "${CHESS_STACK_PREFIX}"
 
-          cmake -S "${ADIOS2_SRC}" -B "${ADIOS2_BUILD}" \
-            -G Ninja \
-            -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
-            -DCMAKE_INSTALL_PREFIX="${ADIOS2_PREFIX}" \
-            -DADIOS2_USE_MPI=ON \
-            -DADIOS2_BUILD_EXAMPLES=OFF \
-            -DADIOS2_BUILD_TESTING=OFF \
-            -DADIOS2_BUILD_PYTHON=OFF
+          if [ ! -f "${ADIOS2_BUILD}/CMakeCache.txt" ]; then
+            cmake -S "${ADIOS2_SRC}" -B "${ADIOS2_BUILD}" \
+              -G Ninja \
+              -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
+              -DCMAKE_INSTALL_PREFIX="${CHESS_STACK_PREFIX}" \
+              -DADIOS2_USE_MPI=ON \
+              -DADIOS2_BUILD_EXAMPLES=OFF \
+              -DADIOS2_BUILD_TESTING=OFF \
+              -DADIOS2_BUILD_PYTHON=OFF
+          fi
 
           cmake --build "${ADIOS2_BUILD}" \
             --config "${CMAKE_BUILD_TYPE}" \
@@ -441,10 +426,7 @@ jobs:
         if: ${{ runner.os == 'Linux' && env.USE_ADIOS2 == 'true' }}
         run: |
           set -eux
-          echo "ADIOS2_DIR=${ADIOS2_PREFIX}" >> "$GITHUB_ENV"
-          echo "CMAKE_PREFIX_PATH=${ADIOS2_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=${ADIOS2_PREFIX}/lib/cmake:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=${ADIOS2_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          echo "ADIOS2_DIR=${CHESS_STACK_PREFIX}" >> "$GITHUB_ENV"
 
       # ---- Mutation++ (C++ library only) -----------------------------------
       - name: Clone Mutation++
@@ -465,17 +447,19 @@ jobs:
         id: cache-mpp
         uses: actions/cache@v4
         with:
-          path: ${{ env.MPP_PREFIX }}
+          path: ${{ env.MPP_BUILD }}
           key: ${{ runner.os }}-mpp-${{ steps.mppsha.outputs.mpp_sha }}-${{ env.CMAKE_BUILD_TYPE }}
 
       - name: Build & install Mutation++ (C++)
-        if: ${{ env.USE_MPP == 'true' && steps.cache-mpp.outputs.cache-hit != 'true' }}
+        if: ${{ env.USE_MPP == 'true' }}
         run: |
           set -eux
-          cmake -S "${MPP_SRC}" -B "${MPP_BUILD}" \
-            -G Ninja \
-            -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
-            -DCMAKE_INSTALL_PREFIX="${MPP_PREFIX}"
+          if [ ! -f "${MPP_BUILD}/CMakeCache.txt" ]; then
+            cmake -S "${MPP_SRC}" -B "${MPP_BUILD}" \
+              -G Ninja \
+              -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
+              -DCMAKE_INSTALL_PREFIX="${CHESS_STACK_PREFIX}"
+          fi
           cmake --build "${MPP_BUILD}" --config "${CMAKE_BUILD_TYPE}" --target install -- -v
 
       - name: Configure Mutation++ environment
@@ -484,21 +468,17 @@ jobs:
           set -eux
           echo "MPP_DIRECTORY=${MPP_SRC}" >> "$GITHUB_ENV"
           echo "MPP_DATA_DIRECTORY=${MPP_SRC}/data" >> "$GITHUB_ENV"
-          echo "PATH=${MPP_PREFIX}/bin:${PATH}" >> "$GITHUB_ENV"
+          # echo "PATH=${CHESS_STACK_PREFIX}/bin:${PATH}" >> "$GITHUB_ENV"
 
-          if [[ -d "${MPP_PREFIX}/lib64" ]]; then LIBDIR=lib64; else LIBDIR=lib; fi
+          if [[ -d "${CHESS_STACK_PREFIX}/lib64" ]]; then LIBDIR=lib64; else LIBDIR=lib; fi
           echo "MPP_LIBDIR=${LIBDIR}" >> "$GITHUB_ENV"
-
-          echo "LD_LIBRARY_PATH=${MPP_PREFIX}/${LIBDIR}:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=${MPP_PREFIX}/${LIBDIR}/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
-          echo "CMAKE_PREFIX_PATH=${MPP_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
 
       - name: Cache Mutation++ Python bindings
         if: ${{ env.USE_MPP == 'true' }}
         id: cache-mpp-py
         uses: actions/cache@v4
         with:
-          path: ${{ env.MPP_PY_PREFIX }}
+          path: ${{ env.CHESS_STACK_PREFIX }}/pympp
           key: ${{ runner.os }}-mpp-py-${{ steps.mppsha.outputs.mpp_sha }}-${{ env.PYTHON_ABI }}
 
       - name: Install Mutation++ Python bindings
@@ -511,12 +491,12 @@ jobs:
           cmake --version
 
           # Make sure the target directory exists
-          mkdir -p "${MPP_PY_PREFIX}"
+          mkdir -p "${CHESS_STACK_PREFIX}/pympp"
 
           # First try with normal build isolation
           set +e
           python3 -m pip install "${MPP_SRC}" \
-            --target "${MPP_PY_PREFIX}" \
+            --target "${CHESS_STACK_PREFIX}/pympp" \
             --verbose
           status=$?
           set -e
@@ -526,7 +506,7 @@ jobs:
             echo "First pip install attempt failed with exit code $status. Retrying with --no-build-isolation..."
             python3 -m pip install "${MPP_SRC}" \
               --no-build-isolation \
-              --target "${MPP_PY_PREFIX}" \
+              --target "${CHESS_STACK_PREFIX}/pympp" \
               --verbose
           fi
 
@@ -534,7 +514,7 @@ jobs:
         if: ${{ env.USE_MPP == 'true' }}
         run: |
           set -eux
-          echo "PYTHONPATH=${MPP_PY_PREFIX}:${PYTHONPATH:-}" >> "$GITHUB_ENV"
+          echo "PYTHONPATH=${CHESS_STACK_PREFIX}/pympp:${PYTHONPATH:-}" >> "$GITHUB_ENV"
 
       - name: Verify Mutation++ Python import
         if: ${{ env.USE_MPP == 'true' }}
@@ -585,32 +565,34 @@ jobs:
           git clone -b release-v2.5.0 https://github.com/precice/precice.git "${PRECICE_SRC}"
           cd "${PRECICE_SRC}"
 
-      - name: Cache preCICE install
+      - name: Cache preCICE build
         if: ${{ env.USE_PRECICE == 'true' }}
         id: cache-precice
         uses: actions/cache@v4
         with:
-          path: ${{ env.PRECICE_PREFIX }}
+          path: ${{ env.PRECICE_BUILD }}
           key: ${{ runner.os }}-precice-v2_5_0-${{ env.CMAKE_BUILD_TYPE }}
 
       - name: Build & install preCICE (with PETSc + Python)
-        if: ${{ env.USE_PRECICE == 'true' && steps.cache-precice.outputs.cache-hit != 'true' }}
+        if: ${{ env.USE_PRECICE == 'true' }}
         run: |
           set -eux
 
-          cmake -S "${PRECICE_SRC}" -B "${PRECICE_SRC}/build" \
-            -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
-            -DBUILD_SHARED_LIBS=ON \
-            -DPRECICE_PythonActions=ON \
-            -DPRECICE_PETScMapping=ON \
-            -DPETSC_DIR="${PETSC_DIR:-}" \
-            -DPYTHON_EXECUTABLE="$(command -v python3)" \
-            -DCMAKE_C_COMPILER=mpicc \
-            -DCMAKE_Fortran_COMPILER=mpif90 \
-            -DCMAKE_CXX_COMPILER=mpicxx \
-            -DCMAKE_INSTALL_PREFIX="${PRECICE_PREFIX}"
+          if [ ! -f "${PRECICE_BUILD}/CMakeCache.txt" ]; then
+            cmake -S "${PRECICE_SRC}" -B "${PRECICE_BUILD}" \
+              -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
+              -DBUILD_SHARED_LIBS=ON \
+              -DPRECICE_PythonActions=ON \
+              -DPRECICE_PETScMapping=ON \
+              -DPETSC_DIR="${PETSC_DIR:-}" \
+              -DPYTHON_EXECUTABLE="$(command -v python3)" \
+              -DCMAKE_C_COMPILER=mpicc \
+              -DCMAKE_Fortran_COMPILER=mpif90 \
+              -DCMAKE_CXX_COMPILER=mpicxx \
+              -DCMAKE_INSTALL_PREFIX="${CHESS_STACK_PREFIX}"
+          fi
 
-          cmake --build "${PRECICE_SRC}/build" \
+          cmake --build "${PRECICE_BUILD}" \
             --config "${CMAKE_BUILD_TYPE}" \
             --target install -- -j"$(nproc || echo 2)"
 
@@ -618,18 +600,9 @@ jobs:
         if: ${{ env.USE_PRECICE == 'true' }}
         run: |
           set -eux
-          ls -latR ${PRECICE_PREFIX}
-          echo "PRECICE_PREFIX=${PRECICE_PREFIX}" >> "$GITHUB_ENV"
-          echo "PATH=${PRECICE_PREFIX}/bin:${PATH}" >> "$GITHUB_ENV"
-          echo "PRECICE_DIR=${PRECICE_PREFIX}" >> "$GITHUB_ENV"
-
-          if [[ -d "${PRECICE_PREFIX}/lib64" ]]; then LIBDIR=lib64; else LIBDIR=lib; fi
-          echo "LD_LIBRARY_PATH=${PRECICE_PREFIX}/${LIBDIR}:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=${PRECICE_PREFIX}/${LIBDIR}/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
-          echo "CMAKE_PREFIX_PATH=${PRECICE_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
-          echo "CPATH=${PRECICE_PREFIX}/include" >> "$GITHUB_ENV"
-
-          echo "PRECICE_PREFIX=$PRECICE_PREFIX"
+          ls -latR ${CHESS_STACK_PREFIX}
+          echo "PRECICE_DIR=${CHESS_STACK_PREFIX}" >> "$GITHUB_ENV"
+          echo "CHESS_STACK_PREFIX=$CHESS_STACK_PREFIX"
           echo "PATH=$PATH"
           echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}"
           echo "PKG_CONFIG_PATH=${PKG_CONFIG_PATH:-}"
@@ -659,8 +632,8 @@ jobs:
           EOF
 
           mpif90 -o precice_test precice_test.F90 \
-            -I"${PRECICE_PREFIX}/include" \
-            -L"${PRECICE_PREFIX}/lib" -lprecice
+            -I"${CHESS_STACK_PREFIX}/include" \
+            -L"${CHESS_STACK_PREFIX}/lib" -lprecice
 
           echo "Manual preCICE Fortran test linked successfully."
 
@@ -678,26 +651,23 @@ jobs:
 
           # Configure GKlib build; install into GKLIB_PREFIX
           make config \
-            prefix="${GKLIB_PREFIX}" \
+            prefix="${CHESS_STACK_PREFIX}" \
             cc=mpicc
 
           make -j"$(nproc || echo 2)"
           make install
 
           # Wire GKlib into the environment
-          echo "GKLIB_DIR=${GKLIB_PREFIX}" >> "$GITHUB_ENV"
-          echo "CPATH=${GKLIB_PREFIX}/include:${CPATH:-}" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=${GKLIB_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
-          echo "CMAKE_PREFIX_PATH=${GKLIB_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
+          echo "GKLIB_DIR=${CHESS_STACK_PREFIX}" >> "$GITHUB_ENV"
 
       - name: Clone METIS
         if: ${{ runner.os == 'Linux' && env.USE_MFEM == 'true' }}
         run: |
           set -eux
-          # You can pin a specific tag if you want, e.g. v5.2.1
           git clone https://github.com/KarypisLab/METIS.git "${METIS_SRC}"
           cd "${METIS_SRC}"
-          # git checkout v5.2.1   # optional pin
+          # Pin specific tag here, e.g. v5.2.1
+          # git checkout v5.2.1
 
       - name: Build and install METIS
         if: ${{ runner.os == 'Linux' && env.USE_MFEM == 'true' }}
@@ -706,24 +676,21 @@ jobs:
           cd "${METIS_SRC}"
 
           make config \
-            prefix="${METIS_PREFIX}" \
+            prefix="${CHESS_STACK_PREFIX}" \
             cc=mpicc \
             shared=0 \
-            gklib_path="${GKLIB_PREFIX}"
+            gklib_path="${CHESS_STACK_PREFIX}"
 
           make -j"$(nproc || echo 2)"
           make install
 
-          echo "METIS_DIR=${METIS_PREFIX}" >> "$GITHUB_ENV"
-          echo "CPATH=${METIS_PREFIX}/include:${CPATH:-}" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=${METIS_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
-          echo "CMAKE_PREFIX_PATH=${METIS_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
+          echo "METIS_DIR=${CHESS_STACK_PREFIX}" >> "$GITHUB_ENV"
 
       - name: Clone hypre
         if: ${{ runner.os == 'Linux' && env.USE_MFEM == 'true' }}
         run: |
           set -eux
-          # You can pin whatever version you like here
+          # Pin version here
           HYPRE_REF="v2.32.0"
           git clone https://github.com/hypre-space/hypre.git "${HYPRE_SRC}"
           cd "${HYPRE_SRC}"
@@ -734,12 +701,12 @@ jobs:
         run: |
           set -eux
 
-          mkdir -p "${HYPRE_BUILD}" "${HYPRE_PREFIX}"
+          mkdir -p "${HYPRE_BUILD}" "${CHESS_STACK_PREFIX}"
 
           cmake -S "${HYPRE_SRC}/src" -B "${HYPRE_BUILD}" \
             -G Ninja \
             -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
-            -DCMAKE_INSTALL_PREFIX="${HYPRE_PREFIX}" \
+            -DCMAKE_INSTALL_PREFIX="${CHESS_STACK_PREFIX}" \
             -DHYPRE_WITH_MPI=ON \
             -DHYPRE_ENABLE_SHARED=ON \
             -DHYPRE_WITH_OPENMP=OFF
@@ -748,17 +715,13 @@ jobs:
             --config "${CMAKE_BUILD_TYPE}" \
             --target install -- -j"$(nproc || echo 2)"
 
-          echo "HYPRE_DIR=${HYPRE_PREFIX}" >> "$GITHUB_ENV"
-          echo "CPATH=${HYPRE_PREFIX}/include:${CPATH:-}" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=${HYPRE_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
-          echo "CMAKE_PREFIX_PATH=${HYPRE_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
+          echo "HYPRE_DIR=${CHESS_STACK_PREFIX}" >> "$GITHUB_ENV"
 
       - name: Clone MFEM
         if: ${{ runner.os == 'Linux' && env.USE_MFEM == 'true' }}
         run: |
           set -eux
-          # You can pin whatever version you like here (v4.4 from the advice,
-          # or keep using v4.8 if that's what you prefer).
+          # Pin version if needed: here (v4.4 from the advice)
           MFEM_VERSION=v4.8
           git clone --depth 1 --branch "${MFEM_VERSION}" https://github.com/mfem/mfem.git "${MFEM_SRC}"
 
@@ -770,35 +733,33 @@ jobs:
           cd "${MFEM_SRC}"
           echo "mfem_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Cache MFEM install
+      - name: Cache MFEM build
         if: ${{ runner.os == 'Linux' && env.USE_MFEM == 'true' }}
         id: cache-mfem
         uses: actions/cache@v4
         with:
-          path: ${{ env.MFEM_PREFIX }}
+          path: ${{ env.MFEM_BUILD }}
           key: ${{ runner.os }}-mfem-${{ steps.mfemsha.outputs.mfem_sha }}-${{ env.BUILD_NAME }}-${{ env.CMAKE_BUILD_TYPE }}
 
       - name: Build & install MFEM (MPI + HYPRE + METIS + ADIOS2 + SUNDIALS)
-        if: ${{ runner.os == 'Linux' && env.USE_MFEM == 'true' && steps.cache-mfem.outputs.cache-hit != 'true' }}
+        if: ${{ runner.os == 'Linux' && env.USE_MFEM == 'true' }}
         run: |
           set -eux
 
-          mkdir -p "${MFEM_BUILD}" "${MFEM_PREFIX}"
-
-          cmake -S "${MFEM_SRC}" -B "${MFEM_BUILD}" \
-            -G Ninja \
-            -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
-            -DCMAKE_INSTALL_PREFIX="${MFEM_PREFIX}" \
-            -DMFEM_USE_MPI=YES \
-            -DMFEM_USE_LAPACK=YES \
-            -DMFEM_DEBUG=NO \
-            -DMFEM_USE_METIS_5=YES \
-            -DMFEM_USE_ADIOS2=YES \
-            -DMFEM_USE_SUNDIALS=YES \
-            -DADIOS2_DIR="${ADIOS2_PREFIX}" \
-            -DHYPRE_DIR="${HYPRE_PREFIX}" \
-            -DMETIS_DIR="${METIS_PREFIX}" \
-            -DSUNDIALS_DIR="${SUNDIALS_PREFIX}"
+          mkdir -p "${MFEM_BUILD}" "${CHESS_STACK_PREFIX}"
+          if [ ! -f "${MFEM_BUILD}/CMakeCache.txt" ]; then
+            cmake -S "${MFEM_SRC}" -B "${MFEM_BUILD}" \
+              -G Ninja \
+              -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
+              -DCMAKE_INSTALL_PREFIX="${CHESS_STACK_PREFIX}" \
+              -DMFEM_INSTALL_EXAMPLES=YES \
+              -DMFEM_USE_MPI=YES \
+              -DMFEM_USE_LAPACK=YES \
+              -DMFEM_DEBUG=NO \
+              -DMFEM_USE_METIS_5=YES \
+              -DMFEM_USE_ADIOS2=YES \
+              -DMFEM_USE_SUNDIALS=YES
+          fi
 
           cmake --build "${MFEM_BUILD}" \
             --config "${CMAKE_BUILD_TYPE}" \
@@ -808,63 +769,16 @@ jobs:
         if: ${{ runner.os == 'Linux' && env.USE_MFEM == 'true' }}
         run: |
           set -eux
-          echo "MFEM_DIR=${MFEM_PREFIX}" >> "$GITHUB_ENV"
-          echo "CPATH=${MFEM_PREFIX}/include:${CPATH:-}" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=${MFEM_PREFIX}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
-          echo "CMAKE_PREFIX_PATH=${MFEM_PREFIX}:${CMAKE_PREFIX_PATH:-}" >> "$GITHUB_ENV"
-
+          echo "MFEM_DIR=${CHESS_STACK_PREFIX}" >> "$GITHUB_ENV"
 
       - name: Package dependency stack artifacts (${{ env.BUILD_NAME }})
         run: |
           set -eux
 
-          ROOT="${GITHUB_WORKSPACE}/deps-${BUILD_NAME}"
-          rm -rf "${ROOT}"
-          mkdir -p "${ROOT}"
-
-          if [ -n "${CGNS_DIR:-}" ] && [ -d "${CGNS_DIR}" ]; then
-            cp -a "${CGNS_DIR}" "${ROOT}/cgns"
-          fi
-
-          if [ -n "${HDF5_DIR:-}" ] && [ -d "${HDF5_DIR}" ]; then
-            cp -a "${HDF5_DIR}" "${ROOT}/hdf5"
-          fi
-
-          if [ -d "${MPP_PREFIX}" ]; then
-            cp -a "${MPP_PREFIX}" "${ROOT}/mpp"
-          fi
-
-          if [ -d "${MPP_PY_PREFIX}" ]; then
-            cp -a "${MPP_PY_PREFIX}" "${ROOT}/mpp-py"
-          fi
-
-          if [ -d "${PRECICE_PREFIX}" ]; then
-            cp -a "${PRECICE_PREFIX}" "${ROOT}/precice"
-          fi
-
-          if [ -d "${SUNDIALS_PREFIX}" ]; then
-            cp -a "${SUNDIALS_PREFIX}" "${ROOT}/sundials"
-          fi
-
-          if [ -d "${METIS_PREFIX}" ]; then
-            cp -a "${METIS_PREFIX}" "${ROOT}/metis"
-          fi
-
-          if [ -d "${GKLIB_PREFIX}" ]; then
-            cp -a "${GKLIB_PREFIX}" "${ROOT}/gklib"
-          fi
-
-          if [ -d "${MFEM_PREFIX}" ]; then
-            cp -a "${MFEM_PREFIX}" "${ROOT}/mfem-install"
-          fi
-
-          if [ -d "${MFEM_SRC}" ]; then
-            cp -a "${MFEM_SRC}" "${ROOT}/mfem"
-          fi
-
-          tar -C "$(dirname "${ROOT}")" \
-            -czf "deps-${BUILD_NAME}.tar.gz" \
-            "$(basename "${ROOT}")"
+          STACK_DIR="${CHESS_STACK_PREFIX}"
+          STACK_ROOT="$(dirname "${STACK_DIR}")"
+          STACK_NAME="$(basename "${STACK_DIR}")"
+          tar -C "${STACK_ROOT}" -czf "deps-${BUILD_NAME}.tar.gz" "${STACK_NAME}"
 
       - name: Upload dependency stack artifact (${{ env.BUILD_NAME }})
         uses: actions/upload-artifact@v4
